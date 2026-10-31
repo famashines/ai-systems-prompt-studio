@@ -15,6 +15,7 @@ export interface PublishPromptVersion {
   promptId: string;
   text: string;
   variables: string[];
+  streamVersion: number;
 }
 
 export type PromptCommand = CreatePrompt | PublishPromptVersion;
@@ -69,12 +70,12 @@ export function decide(state: PromptState, command: PromptCommand): PromptEvent[
     return [{ type: "prompts.PromptCreated", schemaVersion: 1, payload: { promptId, name } }];
   }
   if (state.status === "new") throw new PromptNotFoundError();
-  const { promptId, text, variables } = command;
+  const { promptId, text, variables, streamVersion } = command;
   return [
     {
       type: "prompts.PromptVersionPublished",
       schemaVersion: 1,
-      payload: { promptId, text, variables, version: state.versions.length + 1 },
+      payload: { promptId, text, variables, version: streamVersion },
     },
   ];
 }

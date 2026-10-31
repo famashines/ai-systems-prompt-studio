@@ -43,6 +43,7 @@ export async function seed(store: EventStore): Promise<void> {
       promptId,
       text,
       variables: [],
+      streamVersion: 1,
     });
     try {
       await store.append({

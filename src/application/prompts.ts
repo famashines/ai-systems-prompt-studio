@@ -80,11 +80,11 @@ export async function publishPromptVersion(
 ): Promise<{ answer: PublishPromptVersionAnswer; replayed: boolean }> {
   const { promptId } = input.payload;
   const { state, last } = await load(store, promptId);
-  const events = decide(state, { type: "PublishPromptVersion", ...input.payload });
-  const version = state.status === "new" ? 1 : state.versions.length + 1;
-  return append(store, promptId, input.expectedVersion ?? last, events, input, {
+  const streamVersion = input.expectedVersion ?? last;
+  const events = decide(state, { type: "PublishPromptVersion", ...input.payload, streamVersion });
+  return append(store, promptId, streamVersion, events, input, {
     promptId,
-    version,
+    version: streamVersion,
   });
 }
 

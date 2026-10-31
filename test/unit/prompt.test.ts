@@ -18,11 +18,12 @@ const promptId = "00000000-0000-4000-8000-000000000001";
 
 const create: PromptCommand = { type: "CreatePrompt", promptId, name: "writer" };
 
-const publish = (text: string, variables: string[] = []): PromptCommand => ({
+const publish = (streamVersion: number, text: string, variables: string[] = []): PromptCommand => ({
   type: "PublishPromptVersion",
   promptId,
   text,
   variables,
+  streamVersion,
 });
 
 const created: PromptEvent = {
@@ -52,20 +53,24 @@ test("given PromptCreated, when CreatePrompt, then PromptExistsError", () => {
 });
 
 test("given no events, when PublishPromptVersion, then PromptNotFoundError", () => {
-  assert.throws(given([]).when(publish("Be short.")), PromptNotFoundError);
+  assert.throws(given([]).when(publish(0, "Be short.")), PromptNotFoundError);
 });
 
 test("given PromptCreated, when PublishPromptVersion, then version 1 with its variables", () => {
-  assert.deepEqual(given([created]).when(publish("Hello {{name}}", ["name"]))(), [
+  assert.deepEqual(given([created]).when(publish(1, "Hello {{name}}", ["name"]))(), [
     published(1, "Hello {{name}}", ["name"]),
   ]);
 });
 
-test("given two versions, when PublishPromptVersion, then version 3", () => {
+test("given two versions, when PublishPromptVersion at stream version 3, then version 3", () => {
   assert.deepEqual(
-    given([created, published(1, "One"), published(2, "Two")]).when(publish("Three"))(),
+    given([created, published(1, "One"), published(2, "Two")]).when(publish(3, "Three"))(),
     [published(3, "Three")],
   );
+});
+
+test("given PromptCreated, when PublishPromptVersion at stream version 2, then version 2", () => {
+  assert.deepEqual(given([created]).when(publish(2, "Two"))(), [published(2, "Two")]);
 });
 
 test("an old version stays readable after a new version", () => {
