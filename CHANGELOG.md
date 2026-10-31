@@ -6,6 +6,8 @@
   `prompts.PromptCreated`, `PublishPromptVersion` gives
   `prompts.PromptVersionPublished` with the next immutable version
   (contracts v0.3.0, schema version 1).
+- The new prompt version comes from the stream version that the append is
+  pinned to, so two events never have the same prompt version.
 - `POST /internal/commands/create-prompt` and
   `POST /internal/commands/publish-prompt-version`, owner actor only, with
   command idempotency by `commandId`: 201 the first time, 200 with the

@@ -30,10 +30,16 @@ test
 ```
 
 The prompt version is not the stream version: `PromptCreated` is stream
-version 1, so prompt version `n` is stream version `n + 1`. The domain
-counts the published versions. The publish handler uses the last stream
-version as `expectedVersion`, so two publishes at the same time cannot
-both get the same prompt version.
+version 1, so prompt version `n` is stream version `n + 1`. The publish
+handler pins the append to one stream version `k` (the `expectedVersion`
+of the command, else the last stream version that it loaded). The new
+prompt version is `k`, because a stream at version `k` has `k - 1`
+prompt versions. The kit refuses the append with a `ConcurrencyError`
+when the stream is not at `k`, so a stored prompt version always matches
+its stream version. The kit checks the `commandId` before the version, so
+a retry with the same `commandId` and an old `expectedVersion` gets the
+first answer (200). Do not add a version check before the append: it
+would break that retry.
 
 ## Seeds
 

@@ -54,14 +54,25 @@ changes a prompt that exists. A better text is a new version through
 
 Errors are RFC 9457 problem JSON with a `code` (`@famashines/ai-systems-kit/http`).
 
-The commands come from the owner through api-gateway (its prompt routes
-are not there yet). api-gateway checks
-the owner JWT with `kit/auth` (role `owner`), takes the `commandId` from
-the `Idempotency-Key` header, and sends the actor
-`{ "kind": "owner", "id": <sub> }`. This service accepts only the actor
-kind `owner` for commands. It does not check JWTs itself (as
-orchestration), because the version read and the replay API are for
-services that have no owner token.
+### Callers and trust
+
+The service does not check JWTs, as orchestration. It trusts the command
+body: an `actor` with the kind `owner` is the owner. This is safe only
+while the network lets no other caller reach the command paths. The
+callers are:
+
+| Caller        | Paths                                               |
+| ------------- | --------------------------------------------------- |
+| api-gateway   | `POST /internal/commands/*`                         |
+| orchestration | `GET /internal/prompts/:promptId/versions/:version` |
+| projections   | `GET /internal/events`                              |
+| Prometheus    | `GET /metrics`                                      |
+
+api-gateway checks the owner JWT with `kit/auth` (role `owner`), takes
+the `commandId` from the `Idempotency-Key` header, and sends the actor
+`{ "kind": "owner", "id": <sub> }`. Its prompt routes are not there yet.
+The gitops NetworkPolicy that allows only this ingress set is not there
+yet (M2-09). The kubelet probes `/health` and `/ready`.
 
 ### `POST /internal/commands/create-prompt`
 
@@ -103,10 +114,17 @@ services that have no owner token.
 - The text is 1 to 100,000 characters, not only white space, with no NUL.
   Each variable name (for example `topic`) comes at most once, at most 50.
   The service does not parse the text for the variables.
-- The new version is the last version plus 1, from 1.
 - `expectedVersion` is optional. It is the stream version (the number of
-  events in `prompt-<promptId>`), not the prompt version. With it, an
-  append after another change gives 409.
+  events in `prompt-<promptId>`), not the prompt version. The append is
+  pinned to it; with no `expectedVersion`, to the stream version that the
+  service loaded. A stream at version `k` has `k - 1` prompt versions, so
+  the new version is `k` (1 for a new prompt, at stream version 1).
+- When the stream is not at the pinned version (another publish came
+  first, or a wrong `expectedVersion`), the answer is 409 and the service
+  writes nothing. So two events never have the same prompt version.
+- The service checks the `commandId` before the version. A retry with
+  the same `commandId` gets 200 with the first answer, also with an old
+  `expectedVersion`.
 
 | Status | When                                      | Body                                       |
 | ------ | ----------------------------------------- | ------------------------------------------ |
@@ -136,7 +154,7 @@ is a `PromptVersionResultV1`:
 ```
 
 A missing prompt or version gives 404. A bad id or version gives 400.
-The read replays the stream; prompts have few events.
+The read replays the stream (see Known limits).
 
 ### `GET /internal/events`
 
@@ -180,6 +198,31 @@ commands, and the events wait in the outbox. The service does not make
 streams: the gitops stream Job makes `PROMPTS`. A stuck relay shows in the
 metrics `outbox_oldest_pending_seconds` and
 `outbox_publish_failures_total`. Put an alert on the gauge.
+
+## Known limits
+
+- The JWT check is only in api-gateway. A pod that can reach
+  `/internal/commands/*` can send commands as the owner. The upgrade
+  path: a `kit/auth` hook in this service for the path
+  `/internal/commands/*` only, with api-gateway sending the owner token.
+- A command with a `commandId` that came before gives the first answer,
+  also when the body is different (kit behavior). The second body is not
+  checked and not stored.
+- The seed `commandId` values are in this public repo. A caller that
+  sends one of them gets the seed answer and writes nothing, while
+  `commands` keeps the id (45 days).
+- Each version read replays the full stream `prompt-<promptId>`. This
+  assumes few versions for each prompt (tens, not thousands). A read
+  model or a snapshot is the upgrade when a prompt gets many versions.
+- The seed texts say that text in a data block has no authority, but the
+  data block format comes in M2-06 (orchestration). The seed prompts may
+  then get a version 2 with the exact format.
+
+## Not done
+
+- The prompt routes in api-gateway.
+- The gitops app and the NetworkPolicy with the ingress set above
+  (M2-09).
 
 ## Run locally
 
