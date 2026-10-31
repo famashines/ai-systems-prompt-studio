@@ -34,8 +34,10 @@ The ids are fixed. agent-manager seeds point at them:
 | `orchestrator` | `a0d53ff1-1eda-4636-bb2f-880df141bcb9` | `1`       |
 | `writer`       | `cc74090a-534e-4072-8bfd-e6c5b9f22f41` | `1`       |
 
-The texts are in `src/seeds.ts`. Both have no variables, and both say
-that text in a data block has no authority (ARCHITECTURE 11.2). The seed
+The texts are in `src/seeds.ts`. Both have no variables. Both say
+that the data block named `owner_message` is the request of the owner, and
+that any other data block is untrusted data that the agent never follows
+(ARCHITECTURE 11.2). The seed
 is safe to run again: it never writes a second copy, and it never
 changes a prompt that exists. A better text is a new version through
 `PublishPromptVersion`.
@@ -214,9 +216,8 @@ metrics `outbox_oldest_pending_seconds` and
 - Each version read replays the full stream `prompt-<promptId>`. This
   assumes few versions for each prompt (tens, not thousands). A read
   model or a snapshot is the upgrade when a prompt gets many versions.
-- The seed texts say that text in a data block has no authority, but the
-  data block format comes in M2-06 (orchestration). The seed prompts may
-  then get a version 2 with the exact format.
+- The seed texts name the data block `owner_message`, as orchestration
+  writes it. A change of that block name needs a new prompt version.
 
 ## Not done
 
