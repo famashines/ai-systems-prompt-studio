@@ -17,7 +17,9 @@
   `PromptVersionResultV1`. Old versions stay readable.
 - `GET /internal/events`: the replay API in position order.
 - Migration `001-seed-prompts`: version 1 of the `orchestrator` and
-  `writer` system prompts, with fixed ids.
+  `writer` system prompts, with fixed ids. The seed texts treat the data
+  block `owner_message` as the owner's request and any other data block as
+  untrusted data.
 - Outbox relay to the stream `PROMPTS`, `/health`, `/ready`, `/metrics`,
   graceful shutdown.
 - Container image on Node 26 slim, uid 1000, read-only root file system,
