@@ -1,3 +1,4 @@
+import { parseEvent } from "@famashines/ai-systems-contracts";
 import {
   ConcurrencyError,
   createEventStore,
@@ -65,5 +66,5 @@ export async function seed(store: EventStore): Promise<void> {
 
 export const seedMigration: Migration = {
   name: "001-seed-prompts",
-  up: (db) => seed(createEventStore(db)),
+  up: (db) => seed(createEventStore(db, { parse: parseEvent })),
 };

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { parseEvent } from "@famashines/ai-systems-contracts";
 import { commonEnv, loadConfig } from "@famashines/ai-systems-kit/config";
 import { createEventStore, eventStoreMigration } from "@famashines/ai-systems-kit/event-store";
 import { createService } from "@famashines/ai-systems-kit/http";
@@ -44,7 +45,7 @@ export async function start(config: Readonly<Config>, options: { drainDelayMs?: 
   });
   const migrations = [eventStoreMigration, seedMigration];
   await runMigrations(mongo.db, migrations);
-  const store = createEventStore(mongo.db);
+  const store = createEventStore(mongo.db, { parse: parseEvent });
   logger.info("connecting to NATS");
   const nats = await connectNats({
     servers: config.NATS_SERVERS,
