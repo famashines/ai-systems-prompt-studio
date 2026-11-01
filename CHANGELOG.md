@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Migration `002-orchestrator-prompt-v2`: version 2 of the `orchestrator`
+  prompt names the `plan`, `aggregate` and `check` calls and their
+  answers, and keeps the data block rules. It is published only when the
+  prompt has one version with the seed text, so an owner change stays.
 - `/internal/commands/*` needs an owner bearer token (M2-17, ADR 0028).
   Each command handler checks the token with `bearerHook` of `kit/auth`
   before it reads the body, as budget does: role `owner`, issuer,
