@@ -9,7 +9,7 @@ import { connectMongo, runMigrations } from "@famashines/ai-systems-kit/mongo";
 import { createLogger, startTelemetry } from "@famashines/ai-systems-kit/observability";
 import { z } from "zod";
 import { routes } from "./adapters/http.ts";
-import { seedMigration } from "./seeds.ts";
+import { orchestratorV2Migration, seedMigration } from "./seeds.ts";
 
 export const service = "prompt-studio";
 
@@ -49,7 +49,7 @@ export async function start(config: Readonly<Config>, options: { drainDelayMs?: 
     database: config.MONGODB_DATABASE,
     clientOptions: { serverSelectionTimeoutMS: 5000 },
   });
-  const migrations = [eventStoreMigration, seedMigration];
+  const migrations = [eventStoreMigration, seedMigration, orchestratorV2Migration];
   await runMigrations(mongo.db, migrations);
   const store = createEventStore(mongo.db, { parse: parseEvent });
   logger.info("connecting to NATS");

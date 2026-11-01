@@ -22,7 +22,7 @@ src
 ├── domain/prompt.ts           decide, evolve, versionOf, no I/O
 ├── application/prompts.ts     the command handlers and the version read
 ├── adapters/http.ts           routes, zod schemas of the bodies, params and queries
-├── seeds.ts                   the seed prompts and the migration 001-seed-prompts
+├── seeds.ts                   the seed prompts, the migrations 001-seed-prompts and 002-orchestrator-prompt-v2
 └── main.ts                    config, wiring by constructor, start, shutdown
 test
 ├── unit                       node:test, kit in-memory event store
@@ -48,6 +48,12 @@ with `expectedVersion: 0` and a fixed `commandId`. A `ConcurrencyError`
 means "already there", so the seed is safe to run again (two pods, or
 after the 45 days of `commands`). Never change the ids. A new seed text
 is a new prompt version, not a change of the seed.
+
+`002-orchestrator-prompt-v2` is the pattern for a new seed text: a new
+migration with a fixed `commandId` that publishes the next version only
+when the latest version is the old seed text, with `expectedVersion` the
+stream version that it read. agent-manager then points its seed agent at
+the new version. Deploy prompt-studio first.
 
 ## Coverage gates (ADR 0017)
 

@@ -17,7 +17,7 @@ import {
   type Started,
 } from "@famashines/ai-systems-kit/testing";
 import { envSchema, start } from "../../src/main.ts";
-import { seedPrompts } from "../../src/seeds.ts";
+import { orchestratorV2, seedPrompts } from "../../src/seeds.ts";
 
 const promptStudioGrants = [
   "prompts.>",
@@ -224,19 +224,32 @@ test("the service is ready after the event store and seed migrations", async () 
     .find()
     .map((migration) => migration._id)
     .toArray();
-  assert.deepEqual(names.sort(), ["000-event-store", "001-seed-prompts"]);
+  assert.deepEqual(names.sort(), [
+    "000-event-store",
+    "001-seed-prompts",
+    "002-orchestrator-prompt-v2",
+  ]);
 });
 
-test("the seed prompts are readable and in PROMPTS once", async () => {
+test("the seed prompts and version 2 of the orchestrator are readable and in PROMPTS once", async () => {
   for (const { promptId, name, text } of seedPrompts) {
     const response = await fetch(`${base}/internal/prompts/${promptId}/versions/1`);
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { promptId, name, text, variables: [], version: 1 });
   }
+  const { promptId, text } = orchestratorV2;
+  const response = await fetch(`${base}/internal/prompts/${promptId}/versions/2`);
+  assert.deepEqual(await response.json(), {
+    promptId,
+    name: "orchestrator",
+    text,
+    variables: [],
+    version: 2,
+  });
   const stored = await events()
     .find({ streamId: { $in: seedStreams } })
     .toArray();
-  assert.equal(stored.length, 4);
+  assert.equal(stored.length, 5);
   for (const event of stored) {
     await published(event._id);
     assert.equal((await streamMessages(event._id)).length, 1);
@@ -289,10 +302,12 @@ test("without the stream the service stays ready and the event waits in the outb
   assert.equal((await streamMessages(stored._id)).length, 1);
 });
 
-test("a restart that runs the seed again writes no new seed events", async () => {
+test("a restart that runs the seed migrations again writes no new seed events", async () => {
   await stopService();
-  await mongo.db.collection<{ _id: string }>("migrations").deleteOne({ _id: "001-seed-prompts" });
+  await mongo.db
+    .collection<{ _id: string }>("migrations")
+    .deleteMany({ _id: { $in: ["001-seed-prompts", "002-orchestrator-prompt-v2"] } });
   await mongo.db.collection("commands").deleteMany({});
   await startService();
-  assert.equal(await events().countDocuments({ streamId: { $in: seedStreams } }), 4);
+  assert.equal(await events().countDocuments({ streamId: { $in: seedStreams } }), 5);
 });

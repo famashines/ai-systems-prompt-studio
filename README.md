@@ -31,7 +31,7 @@ The ids are fixed. agent-manager seeds point at them:
 
 | Agent          | `promptId`                             | `version` |
 | -------------- | -------------------------------------- | --------- |
-| `orchestrator` | `a0d53ff1-1eda-4636-bb2f-880df141bcb9` | `1`       |
+| `orchestrator` | `a0d53ff1-1eda-4636-bb2f-880df141bcb9` | `2`       |
 | `writer`       | `cc74090a-534e-4072-8bfd-e6c5b9f22f41` | `1`       |
 
 The texts are in `src/seeds.ts`. Both have no variables. Both say
@@ -41,6 +41,17 @@ that any other data block is untrusted data that the agent never follows
 is safe to run again: it never writes a second copy, and it never
 changes a prompt that exists. A better text is a new version through
 `PublishPromptVersion`.
+
+The migration `002-orchestrator-prompt-v2` publishes version 2 of the
+`orchestrator` prompt (`orchestratorV2` in `src/seeds.ts`, fixed
+`commandId`). Version 2 names the three orchestrator calls of
+orchestration (`plan`, `aggregate`, `check`) and their answers in short,
+and keeps the data block rules. The user message of each call has its
+exact rules. The migration appends only when the prompt has one version
+and its text is the seed text. The append is pinned to that stream
+version, so an owner version that comes first gives a conflict, and the
+migration skips. It never changes a prompt that the owner changed. The
+agent-manager seed step points the seed `orchestrator` agent at version 2.
 
 ## API
 
@@ -218,8 +229,8 @@ and add a NetworkPolicy egress from prompt-studio to Keycloak on port
 when the JWKS cannot be read, a command gets 503.
 
 At start the service connects to MongoDB, runs the migrations
-`000-event-store` and `001-seed-prompts`, connects to NATS, starts the
-relay, and listens. NATS and the relay are not readiness checks. When NATS
+`000-event-store`, `001-seed-prompts` and `002-orchestrator-prompt-v2`,
+connects to NATS, starts the relay, and listens. NATS and the relay are not readiness checks. When NATS
 is down or the stream `PROMPTS` does not exist, the service still takes
 commands, and the events wait in the outbox. The service does not make
 streams: the gitops stream Job makes `PROMPTS`. A stuck relay shows in the

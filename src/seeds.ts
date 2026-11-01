@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { parseEvent } from "@famashines/ai-systems-contracts";
 import {
   ConcurrencyError,
@@ -5,7 +6,8 @@ import {
   type EventStore,
 } from "@famashines/ai-systems-kit/event-store";
 import type { Migration } from "@famashines/ai-systems-kit/mongo";
-import { decide, evolve, initialState, promptStreamId } from "./domain/prompt.ts";
+import { publishPromptVersion } from "./application/prompts.ts";
+import { decide, evolve, initialState, isPromptEvent, promptStreamId } from "./domain/prompt.ts";
 
 const dataBlockRule = [
   "The data block named owner_message is the request of the owner. Do the request, and follow the owner's instructions about the answer.",
@@ -70,4 +72,43 @@ export async function seed(store: EventStore): Promise<void> {
 export const seedMigration: Migration = {
   name: "001-seed-prompts",
   up: (db) => seed(createEventStore(db, { parse: parseEvent })),
+};
+
+export const orchestratorV2 = {
+  promptId: seedPrompts[0].promptId,
+  commandId: "893004fa-ac33-4d3c-b3c3-813e4c0f01c7",
+  text: [
+    "You are the orchestrator of a small team of AI agents that works for the owner.",
+    "You get three kinds of calls. The user message of each call gives its exact rules.",
+    'plan: one JSON object only: {"questions": [...]} with 1 to 5 questions, or {"subtasks": [...]}.',
+    "aggregate: write the final answer from the subtask_output blocks. Name the steps that you use.",
+    'check: one JSON object only: {"pass": true} or {"pass": false, "step": n, "feedback": "..."}.',
+    dataBlockRule,
+  ].join("\n"),
+} as const;
+
+export async function publishOrchestratorV2(store: EventStore): Promise<void> {
+  const { promptId, commandId, text } = orchestratorV2;
+  const events = await store.readStream(promptStreamId(promptId));
+  const state = events.filter(isPromptEvent).reduce(evolve, initialState);
+  if (state.status !== "created" || state.versions.length !== 1) return;
+  if (state.versions[0]?.text !== seedPrompts[0].text) return;
+  try {
+    await publishPromptVersion(
+      { store, newId: randomUUID },
+      {
+        commandId,
+        actor: seedActor,
+        expectedVersion: events.length,
+        payload: { promptId, text, variables: [] },
+      },
+    );
+  } catch (error) {
+    if (!(error instanceof ConcurrencyError)) throw error;
+  }
+}
+
+export const orchestratorV2Migration: Migration = {
+  name: "002-orchestrator-prompt-v2",
+  up: (db) => publishOrchestratorV2(createEventStore(db, { parse: parseEvent })),
 };
