@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { parseEvent } from "@famashines/ai-systems-contracts";
+import { createJwtVerifier } from "@famashines/ai-systems-kit/auth";
 import { commonEnv, loadConfig } from "@famashines/ai-systems-kit/config";
 import { createEventStore, eventStoreMigration } from "@famashines/ai-systems-kit/event-store";
 import { createService } from "@famashines/ai-systems-kit/http";
@@ -7,10 +8,12 @@ import { connectNats, startRelay } from "@famashines/ai-systems-kit/messaging";
 import { connectMongo, runMigrations } from "@famashines/ai-systems-kit/mongo";
 import { createLogger, startTelemetry } from "@famashines/ai-systems-kit/observability";
 import { z } from "zod";
-import { routes } from "./adapters/http.ts";
+import { commandsNeedOwner, routes } from "./adapters/http.ts";
 import { seedMigration } from "./seeds.ts";
 
 export const service = "prompt-studio";
+
+const httpUrl = z.url({ protocol: /^https?$/ });
 
 export const envSchema = commonEnv.omit({ SERVICE_NAME: true }).extend({
   MONGODB_URI: z.string().min(1),
@@ -27,6 +30,9 @@ export const envSchema = commonEnv.omit({ SERVICE_NAME: true }).extend({
     .pipe(z.array(z.string()).min(1)),
   NATS_USER: z.string().min(1),
   NATS_PASSWORD: z.string().min(1),
+  OIDC_ISSUER: httpUrl.default("https://auth.famashines.com/realms/ai-systems"),
+  OIDC_JWKS_URL: httpUrl.optional(),
+  OIDC_AUDIENCE: z.string().min(1).default("ai-systems-app"),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.url().optional(),
   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: z.url().optional(),
 });
@@ -55,8 +61,16 @@ export async function start(config: Readonly<Config>, options: { drainDelayMs?: 
     logger,
   });
   const relay = startRelay({ store, nats, streams: ["PROMPTS"] });
+  const verify = createJwtVerifier({
+    issuer: config.OIDC_ISSUER,
+    audience: config.OIDC_AUDIENCE,
+    requiredRole: "owner",
+    ...(config.OIDC_JWKS_URL === undefined ? {} : { jwksUrl: config.OIDC_JWKS_URL }),
+    logger,
+  });
   const app = createService({
     logger,
+    before: [commandsNeedOwner(verify)],
     routes: routes({ store, newId: randomUUID }),
     readiness: {
       mongo: mongo.ready,

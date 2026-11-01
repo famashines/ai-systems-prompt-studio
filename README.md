@@ -46,10 +46,10 @@ changes a prompt that exists. A better text is a new version through
 
 | Method | Path                                            | Does                                                                                                                                   |
 | ------ | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| POST   | `/internal/commands/create-prompt`              | Create a prompt (no version yet)                                                                                                       |
-| POST   | `/internal/commands/publish-prompt-version`     | Publish the next immutable version of a prompt                                                                                         |
-| GET    | `/internal/prompts/:promptId/versions/:version` | Read one version (`PromptVersionResultV1`)                                                                                             |
-| GET    | `/internal/events?afterPosition=<n>&limit=<m>`  | Replay API: all events in position order                                                                                               |
+| POST   | `/internal/commands/create-prompt`              | Create a prompt (no version yet). Needs an owner bearer token.                                                                         |
+| POST   | `/internal/commands/publish-prompt-version`     | Publish the next immutable version of a prompt. Needs an owner bearer token.                                                           |
+| GET    | `/internal/prompts/:promptId/versions/:version` | Read one version (`PromptVersionResultV1`). No token.                                                                                  |
+| GET    | `/internal/events?afterPosition=<n>&limit=<m>`  | Replay API: all events in position order. No token.                                                                                    |
 | GET    | `/health`                                       | Liveness: 200 while the process runs                                                                                                   |
 | GET    | `/ready`                                        | Readiness: 200 when MongoDB answers and the migrations are done, else 503 with the names of the failing checks (`mongo`, `migrations`) |
 | GET    | `/metrics`                                      | Prometheus metrics                                                                                                                     |
@@ -58,23 +58,35 @@ Errors are RFC 9457 problem JSON with a `code` (`@famashines/ai-systems-kit/http
 
 ### Callers and trust
 
-The service does not check JWTs, as orchestration. It trusts the command
-body: an `actor` with the kind `owner` is the owner. This is safe only
-while the network lets no other caller reach the command paths. The
-callers are:
+A NetworkPolicy is L4: it limits pod and port, not the caller. So the
+service does not trust `actor.kind` `owner` in the body (ADR 0028,
+M2-17). A hook of `kit/auth` checks each request on
+`/internal/commands/*`: `Authorization: Bearer <access token>` with the
+role `owner`, issuer `OIDC_ISSUER`, audience `OIDC_AUDIENCE` and `exp`.
+The `actor.id` of the command must be the `sub` of the token. The hook
+is only on `/internal/commands/*`. The read and replay routes stay open
+to the callers that the network lets in. The callers are:
 
-| Caller        | Paths                                               |
-| ------------- | --------------------------------------------------- |
-| api-gateway   | `POST /internal/commands/*`                         |
-| orchestration | `GET /internal/prompts/:promptId/versions/:version` |
-| projections   | `GET /internal/events`                              |
-| Prometheus    | `GET /metrics`                                      |
+| Caller        | Paths                                               | Token                    |
+| ------------- | --------------------------------------------------- | ------------------------ |
+| api-gateway   | `POST /internal/commands/*`                         | Forwards the owner token |
+| orchestration | `GET /internal/prompts/:promptId/versions/:version` | None                     |
+| projections   | `GET /internal/events`                              | None                     |
+| Prometheus    | `GET /metrics`                                      | None                     |
 
 api-gateway checks the owner JWT with `kit/auth` (role `owner`), takes
-the `commandId` from the `Idempotency-Key` header, and sends the actor
-`{ "kind": "owner", "id": <sub> }`. Its prompt routes are not there yet.
-The gitops NetworkPolicy that allows only this ingress set is not there
-yet (M2-09). The kubelet probes `/health` and `/ready`.
+the `commandId` from the `Idempotency-Key` header, sends the actor
+`{ "kind": "owner", "id": <sub> }`, and must forward the `Authorization`
+header of the owner. Its prompt routes are not there yet, so no caller
+sends commands today. The kubelet probes `/health` and `/ready`.
+
+The status rows of each command below also apply:
+
+| Status | When                                                         | Body                               |
+| ------ | ------------------------------------------------------------ | ---------------------------------- |
+| 401    | No token, or a token that is not valid                       | Problem JSON                       |
+| 403    | No `owner` role, or `actor.id` is not the `sub` of the token | Problem JSON                       |
+| 503    | MongoDB does not answer, or Keycloak cannot be read          | Problem JSON, `code` `unavailable` |
 
 ### `POST /internal/commands/create-prompt`
 
@@ -82,7 +94,7 @@ yet (M2-09). The kubelet probes `/health` and `/ready`.
 {
   "commandId": "6f1c2b9e-1d1a-4c55-9b0e-3a7f0d5e8c21",
   "type": "prompts.CreatePrompt",
-  "actor": { "kind": "owner", "id": "<owner id>" },
+  "actor": { "kind": "owner", "id": "<sub of the token>" },
   "payload": { "name": "summary" }
 }
 ```
@@ -104,7 +116,7 @@ yet (M2-09). The kubelet probes `/health` and `/ready`.
 {
   "commandId": "0b7e5a4c-2f2d-4e1b-8c3a-5d6f7e8a9b0c",
   "type": "prompts.PublishPromptVersion",
-  "actor": { "kind": "owner", "id": "<owner id>" },
+  "actor": { "kind": "owner", "id": "<sub of the token>" },
   "payload": {
     "promptId": "<uuid>",
     "text": "Summarize {{topic}} in three lines.",
@@ -173,17 +185,20 @@ with its `position`. Take the `position` of the last item as the next
 
 Environment variables (`.env.example` has all of them):
 
-| Variable                                                            | Default         | Content                                   |
-| ------------------------------------------------------------------- | --------------- | ----------------------------------------- |
-| `MONGODB_URI`                                                       | required        | MongoDB connection string (replica set)   |
-| `MONGODB_DATABASE`                                                  | `prompt_studio` | Database name                             |
-| `NATS_SERVERS`                                                      | required        | NATS URLs, comma-separated; at least one  |
-| `NATS_USER`                                                         | required        | `ai-systems-prompt-studio` on the cluster |
-| `NATS_PASSWORD`                                                     | required        | From the SealedSecret                     |
-| `PORT`                                                              | `8080`          | HTTP port                                 |
-| `LOG_LEVEL`                                                         | `info`          | pino level                                |
-| `RELEASE`                                                           | `local`         | Release id in logs and metrics            |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | not set         | Traces go over OTLP only when one is set  |
+| Variable                                                            | Default                                         | Content                                   |
+| ------------------------------------------------------------------- | ----------------------------------------------- | ----------------------------------------- |
+| `MONGODB_URI`                                                       | required                                        | MongoDB connection string (replica set)   |
+| `MONGODB_DATABASE`                                                  | `prompt_studio`                                 | Database name                             |
+| `NATS_SERVERS`                                                      | required                                        | NATS URLs, comma-separated; at least one  |
+| `NATS_USER`                                                         | required                                        | `ai-systems-prompt-studio` on the cluster |
+| `NATS_PASSWORD`                                                     | required                                        | From the SealedSecret                     |
+| `OIDC_ISSUER`                                                       | `https://auth.famashines.com/realms/ai-systems` | Keycloak realm                            |
+| `OIDC_JWKS_URL`                                                     | `<issuer>/protocol/openid-connect/certs`        | JWKS inside the cluster                   |
+| `OIDC_AUDIENCE`                                                     | `ai-systems-app`                                | Audience and `azp` of the token           |
+| `PORT`                                                              | `8080`                                          | HTTP port                                 |
+| `LOG_LEVEL`                                                         | `info`                                          | pino level                                |
+| `RELEASE`                                                           | `local`                                         | Release id in logs and metrics            |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | not set                                         | Traces go over OTLP only when one is set  |
 
 A bad value stops the process at start with the variable name. An empty
 value is a value: delete the line to get the default. The kit service
@@ -191,6 +206,11 @@ name is fixed to `prompt-studio`, so the NATS inbox prefix is
 `_INBOX_prompt-studio` and the grants of ADR 0023 apply. The service
 needs only these grants: publish `prompts.>`, `$JS.API.INFO`,
 `$JS.API.STREAM.INFO.PROMPTS`, and subscribe `_INBOX_prompt-studio.>`.
+
+Deploy: set `OIDC_JWKS_URL` to the Keycloak service inside the cluster,
+and add a NetworkPolicy egress from prompt-studio to Keycloak on port
+8080 for the JWKS, as for budget. Keycloak is not a readiness check:
+when the JWKS cannot be read, a command gets 503.
 
 At start the service connects to MongoDB, runs the migrations
 `000-event-store` and `001-seed-prompts`, connects to NATS, starts the
@@ -203,10 +223,10 @@ metrics `outbox_oldest_pending_seconds` and
 
 ## Known limits
 
-- The JWT check is only in api-gateway. A pod that can reach
-  `/internal/commands/*` can send commands as the owner. The upgrade
-  path: a `kit/auth` hook in this service for the path
-  `/internal/commands/*` only, with api-gateway sending the owner token.
+- The JWKS comes over plain HTTP inside the cluster (ARCHITECTURE 11.1,
+  accepted).
+- The read and replay routes have no token check. The NetworkPolicy
+  limits who can reach them.
 - A command with a `commandId` that came before gives the first answer,
   also when the body is different (kit behavior). The second body is not
   checked and not stored.
@@ -221,7 +241,8 @@ metrics `outbox_oldest_pending_seconds` and
 
 ## Not done
 
-- The prompt routes in api-gateway.
+- The prompt routes in api-gateway. They must forward the
+  `Authorization` header of the owner.
 - The gitops app and the NetworkPolicy with the ingress set above
   (M2-09).
 

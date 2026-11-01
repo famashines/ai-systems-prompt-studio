@@ -1,16 +1,24 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
-import { createService } from "@famashines/ai-systems-kit/http";
+import type { JwtVerifier } from "@famashines/ai-systems-kit/auth";
+import { createService, ForbiddenError, UnauthorizedError } from "@famashines/ai-systems-kit/http";
 import { createLogger } from "@famashines/ai-systems-kit/observability";
 import { createMemoryEventStore, fakeClock, fakeIds } from "@famashines/ai-systems-kit/testing";
-import { routes } from "../../src/adapters/http.ts";
+import { commandsNeedOwner, routes } from "../../src/adapters/http.ts";
 
 const clock = fakeClock();
 const store = createMemoryEventStore({ now: clock.now, newId: fakeIds(1) });
 const promptIds = fakeIds(2);
 let nextPromptId = promptIds;
+const tokens: Record<string, JwtVerifier> = {
+  owner: () => Promise.resolve({ sub: "owner-1", roles: ["owner"], exp: 0 }),
+  guest: () => Promise.reject(new ForbiddenError("The role is missing")),
+};
+const verify: JwtVerifier = (token) =>
+  (tokens[token] ?? (() => Promise.reject(new UnauthorizedError())))(token);
 const app = createService({
   logger: createLogger({ service: "prompt-studio", release: "test", level: "silent" }),
+  before: [commandsNeedOwner(verify)],
   routes: routes({ store, newId: () => nextPromptId() }),
   drainDelayMs: 0,
 });
@@ -29,10 +37,13 @@ const commandIds = fakeIds(3);
 const owner = { kind: "owner", id: "owner-1" } as const;
 const missingId = "00000000-0000-4000-8000-0000000000ff";
 
-const post = (path: string, body: unknown) =>
+const post = (path: string, body: unknown, authorization: string | null = "Bearer owner") =>
   fetch(`${base}/internal/commands/${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(authorization === null ? {} : { authorization }),
+    },
     body: JSON.stringify(body),
   });
 
@@ -65,6 +76,50 @@ const problemCode = async (response: Response): Promise<string> => {
   assert.equal(response.headers.get("content-type"), "application/problem+json");
   return ((await response.json()) as { code: string }).code;
 };
+
+test("no token or a bad token gives 401, no owner role gives 403, on each command", async () => {
+  const promptId = await newPrompt();
+  const count = (await store.readAll({ limit: 1000 })).length;
+  for (const [path, body] of [
+    ["create-prompt", createEnvelope({ payload: { name: "guarded" } })],
+    ["publish-prompt-version", publishEnvelope(promptId)],
+    ["unknown", {}],
+  ] as const) {
+    for (const authorization of [null, "Bearer bad", "Basic YTpi"]) {
+      const response = await post(path, body, authorization);
+      assert.equal(response.status, 401, `${path} ${String(authorization)}`);
+      assert.equal(await problemCode(response), "unauthorized");
+    }
+    const response = await post(path, body, "Bearer guest");
+    assert.equal(response.status, 403, path);
+    assert.equal(await problemCode(response), "forbidden");
+  }
+  assert.equal((await store.readAll({ limit: 1000 })).length, count);
+});
+
+test("an actor that is not the subject of the token gives 403 on each command", async () => {
+  const promptId = await newPrompt();
+  const count = (await store.readAll({ limit: 1000 })).length;
+  const other = { actor: { kind: "owner", id: "owner-2" } };
+  for (const [path, body] of [
+    ["create-prompt", createEnvelope({ ...other, payload: { name: "other" } })],
+    ["publish-prompt-version", publishEnvelope(promptId, other)],
+  ] as const) {
+    const response = await post(path, body);
+    assert.equal(response.status, 403, path);
+    assert.equal(await problemCode(response), "forbidden");
+  }
+  assert.equal((await store.readAll({ limit: 1000 })).length, count);
+});
+
+test("the read and replay routes, health and ready need no token", async () => {
+  const promptId = await newPrompt();
+  assert.equal((await post("publish-prompt-version", publishEnvelope(promptId))).status, 201);
+  assert.equal((await read(promptId, "1")).status, 200);
+  for (const path of ["/internal/events", "/health", "/ready"]) {
+    assert.equal((await fetch(`${base}${path}`)).status, 200, path);
+  }
+});
 
 test("CreatePrompt gives 201 with the prompt id, and appends PromptCreated", async () => {
   const command = createEnvelope();

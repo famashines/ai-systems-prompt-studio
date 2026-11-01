@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { after, before, test } from "node:test";
 import { jetstreamManager, type JetStreamManager } from "@nats-io/jetstream";
+import { exportJWK, generateKeyPair, SignJWT, type CryptoKey } from "jose";
 import { loadConfig } from "@famashines/ai-systems-kit/config";
 import { connectNats, type Nats } from "@famashines/ai-systems-kit/messaging";
 import { connectMongo, type Mongo } from "@famashines/ai-systems-kit/mongo";
@@ -71,6 +74,19 @@ let admin: Nats;
 let manager: JetStreamManager;
 let running: Awaited<ReturnType<typeof start>> | undefined;
 let base = "";
+const issuer = "https://auth.example.test/realms/ai-systems";
+let jwks: Server;
+let privateKey: CryptoKey;
+
+const token = (roles = ["owner"]) =>
+  new SignJWT({ typ: "Bearer", azp: "ai-systems-app", realm_access: { roles } })
+    .setProtectedHeader({ alg: "RS256", kid: "k1" })
+    .setIssuer(issuer)
+    .setAudience("ai-systems-app")
+    .setSubject("owner-1")
+    .setIssuedAt()
+    .setExpirationTime("5m")
+    .sign(privateKey);
 
 const startService = async (): Promise<void> => {
   const config = loadConfig(envSchema, {
@@ -78,6 +94,8 @@ const startService = async (): Promise<void> => {
     NATS_SERVERS: natsContainer.url,
     NATS_USER: "ai-systems-prompt-studio",
     NATS_PASSWORD: "prompt-studio",
+    OIDC_ISSUER: issuer,
+    OIDC_JWKS_URL: `http://127.0.0.1:${String((jwks.address() as AddressInfo).port)}/certs`,
     LOG_LEVEL: "silent",
   });
   running = await start({ ...config, PORT: 0 }, { drainDelayMs: 0 });
@@ -96,6 +114,15 @@ before(async () => {
     startMongo(),
     startNats({ config: natsConfig }),
   ]);
+  const pair = await generateKeyPair("RS256", { extractable: true });
+  privateKey = pair.privateKey;
+  const jwk = { ...(await exportJWK(pair.publicKey)), kid: "k1", alg: "RS256", use: "sig" };
+  jwks = createServer((_request, response) => {
+    response
+      .writeHead(200, { "content-type": "application/json" })
+      .end(JSON.stringify({ keys: [jwk] }));
+  });
+  await new Promise<void>((resolve) => jwks.listen(0, "127.0.0.1", resolve));
   mongo = await connectMongo({ url: mongoContainer.url, database: "prompt_studio" });
   admin = await connectNats({
     servers: natsContainer.url,
@@ -113,6 +140,7 @@ after(async () => {
   await stopService();
   await admin.close();
   await mongo.close();
+  await new Promise((resolve) => jwks.close(resolve));
   await Promise.all([mongoContainer.stop(), natsContainer.stop()]);
 });
 
@@ -121,10 +149,13 @@ const events = () =>
 
 const owner = { kind: "owner", id: "owner-1" } as const;
 
-const post = (path: string, body: unknown) =>
+const post = async (path: string, body: unknown, authorization?: string) =>
   fetch(`${base}/internal/commands/${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      authorization: authorization ?? `Bearer ${await token()}`,
+    },
     body: JSON.stringify(body),
   });
 
@@ -159,6 +190,24 @@ const published = async (eventId: string): Promise<void> => {
 };
 
 const seedStreams = seedPrompts.map((prompt) => `prompt-${prompt.promptId}`);
+
+test("a command needs an owner token signed by the JWKS key; the reads need none", async () => {
+  const body = {
+    commandId: randomUUID(),
+    type: "prompts.CreatePrompt",
+    actor: owner,
+    payload: { name: "guarded" },
+  };
+  const count = await events().countDocuments();
+  assert.equal((await post("create-prompt", body, "")).status, 401);
+  assert.equal((await post("create-prompt", body, "Bearer abc.def.ghi")).status, 401);
+  assert.equal((await post("create-prompt", body, `Bearer ${await token([])}`)).status, 403);
+  assert.equal(await events().countDocuments(), count);
+  const [seed] = seedPrompts;
+  assert.ok(seed);
+  assert.equal((await fetch(`${base}/internal/prompts/${seed.promptId}/versions/1`)).status, 200);
+  assert.equal((await fetch(`${base}/internal/events`)).status, 200);
+});
 
 test("the service is ready after the event store and seed migrations", async () => {
   assert.equal((await fetch(`${base}/ready`)).status, 200);
