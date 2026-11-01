@@ -202,6 +202,14 @@ test("a command needs an owner token signed by the JWKS key; the reads need none
   assert.equal((await post("create-prompt", body, "")).status, 401);
   assert.equal((await post("create-prompt", body, "Bearer abc.def.ghi")).status, 401);
   assert.equal((await post("create-prompt", body, `Bearer ${await token([])}`)).status, 403);
+  for (const path of ["//internal/commands/create-prompt", "/internal//commands/create-prompt"]) {
+    const response = await fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(response.status, 401, path);
+  }
   assert.equal(await events().countDocuments(), count);
   const [seed] = seedPrompts;
   assert.ok(seed);

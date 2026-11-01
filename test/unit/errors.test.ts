@@ -8,7 +8,7 @@ import {
 } from "@famashines/ai-systems-kit/http";
 import { createLogger } from "@famashines/ai-systems-kit/observability";
 import { MongoNetworkError, MongoServerSelectionError } from "mongodb";
-import { commandsNeedOwner, routes, toHttpError } from "../../src/adapters/http.ts";
+import { routes, toHttpError } from "../../src/adapters/http.ts";
 import {
   PromptExistsError,
   PromptNotFoundError,
@@ -20,10 +20,10 @@ const down = (): Promise<never> =>
 
 const app = createService({
   logger: createLogger({ service: "prompt-studio", release: "test", level: "silent" }),
-  before: [commandsNeedOwner(() => Promise.resolve({ sub: "owner-1", roles: ["owner"], exp: 0 }))],
   routes: routes({
     store: { append: down, readStream: down, readAll: down },
     newId: () => "00000000-0000-4000-8000-000000000001",
+    verify: () => Promise.resolve({ sub: "owner-1", roles: ["owner"], exp: 0 }),
   }),
   drainDelayMs: 0,
 });

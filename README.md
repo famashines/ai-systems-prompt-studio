@@ -60,12 +60,17 @@ Errors are RFC 9457 problem JSON with a `code` (`@famashines/ai-systems-kit/http
 
 A NetworkPolicy is L4: it limits pod and port, not the caller. So the
 service does not trust `actor.kind` `owner` in the body (ADR 0028,
-M2-17). A hook of `kit/auth` checks each request on
-`/internal/commands/*`: `Authorization: Bearer <access token>` with the
-role `owner`, issuer `OIDC_ISSUER`, audience `OIDC_AUDIENCE` and `exp`.
-The `actor.id` of the command must be the `sub` of the token. The hook
-is only on `/internal/commands/*`. The read and replay routes stay open
-to the callers that the network lets in. The callers are:
+M2-17). Each command handler checks the token first, with `bearerHook`
+of `kit/auth`, as budget does: `Authorization: Bearer <access token>`
+with the role `owner`, issuer `OIDC_ISSUER`, audience `OIDC_AUDIENCE` and
+`exp`. The check comes before the body is read, so a caller with no token
+gets 401 and no validation errors. The check is in the handler, not on a
+path prefix, so it also applies to a path with empty segments (for
+example `//internal/commands/create-prompt`, which the kit router
+matches). Then the `actor.id` of the command must be the `sub` of the
+token. A new command route must call the same check. The read and replay
+routes have no check and stay open to the callers that the network lets
+in. The callers are:
 
 | Caller        | Paths                                               | Token                    |
 | ------------- | --------------------------------------------------- | ------------------------ |
@@ -82,11 +87,11 @@ sends commands today. The kubelet probes `/health` and `/ready`.
 
 The status rows of each command below also apply:
 
-| Status | When                                                         | Body                               |
-| ------ | ------------------------------------------------------------ | ---------------------------------- |
-| 401    | No token, or a token that is not valid                       | Problem JSON                       |
-| 403    | No `owner` role, or `actor.id` is not the `sub` of the token | Problem JSON                       |
-| 503    | MongoDB does not answer, or Keycloak cannot be read          | Problem JSON, `code` `unavailable` |
+| Status | When                                                         | Body                                                                                                                                                |
+| ------ | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 401    | No token, or a token that is not valid                       | Problem JSON                                                                                                                                        |
+| 403    | No `owner` role, or `actor.id` is not the `sub` of the token | Problem JSON                                                                                                                                        |
+| 503    | MongoDB does not answer, or Keycloak cannot be read          | Problem JSON, `code` `unavailable`, with a fixed `detail`: `The database is not available` or `The keys of the identity provider are not available` |
 
 ### `POST /internal/commands/create-prompt`
 

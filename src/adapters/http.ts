@@ -13,7 +13,6 @@ import {
   UnavailableError,
   validate,
   type Handler,
-  type Hook,
   type Request,
   type Route,
 } from "@famashines/ai-systems-kit/http";
@@ -69,11 +68,6 @@ export function toHttpError(error: unknown): unknown {
   return error;
 }
 
-export const commandsNeedOwner = (verify: JwtVerifier): Hook => {
-  const owner = bearerHook(verify);
-  return (request) => (request.path.startsWith("/internal/commands/") ? owner(request) : undefined);
-};
-
 const ownedBy = (request: Request, actor: Actor): void => {
   if (actor.id !== subjectOf(request).sub) {
     throw new ForbiddenError("The actor is not the subject of the token");
@@ -90,12 +84,18 @@ const guard =
     }
   };
 
-export function routes(deps: Deps): Route[] {
+export interface HttpDeps extends Deps {
+  verify: JwtVerifier;
+}
+
+export function routes({ verify, ...deps }: HttpDeps): Route[] {
+  const owner = bearerHook(verify);
   return [
     {
       method: "POST",
       path: "/internal/commands/create-prompt",
       handler: guard(async (request) => {
+        await owner(request);
         const { body } = await validate(request, { body: CreatePromptBody });
         ownedBy(request, body.actor);
         const { answer, replayed } = await createPrompt(deps, body);
@@ -106,6 +106,7 @@ export function routes(deps: Deps): Route[] {
       method: "POST",
       path: "/internal/commands/publish-prompt-version",
       handler: guard(async (request) => {
+        await owner(request);
         const { body } = await validate(request, { body: PublishPromptVersionBody });
         ownedBy(request, body.actor);
         const { answer, replayed } = await publishPromptVersion(deps, body);

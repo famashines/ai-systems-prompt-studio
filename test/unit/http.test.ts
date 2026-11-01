@@ -4,7 +4,7 @@ import type { JwtVerifier } from "@famashines/ai-systems-kit/auth";
 import { createService, ForbiddenError, UnauthorizedError } from "@famashines/ai-systems-kit/http";
 import { createLogger } from "@famashines/ai-systems-kit/observability";
 import { createMemoryEventStore, fakeClock, fakeIds } from "@famashines/ai-systems-kit/testing";
-import { commandsNeedOwner, routes } from "../../src/adapters/http.ts";
+import { routes } from "../../src/adapters/http.ts";
 
 const clock = fakeClock();
 const store = createMemoryEventStore({ now: clock.now, newId: fakeIds(1) });
@@ -18,8 +18,7 @@ const verify: JwtVerifier = (token) =>
   (tokens[token] ?? (() => Promise.reject(new UnauthorizedError())))(token);
 const app = createService({
   logger: createLogger({ service: "prompt-studio", release: "test", level: "silent" }),
-  before: [commandsNeedOwner(verify)],
-  routes: routes({ store, newId: () => nextPromptId() }),
+  routes: routes({ store, newId: () => nextPromptId(), verify }),
   drainDelayMs: 0,
 });
 let base: string;
@@ -83,7 +82,6 @@ test("no token or a bad token gives 401, no owner role gives 403, on each comman
   for (const [path, body] of [
     ["create-prompt", createEnvelope({ payload: { name: "guarded" } })],
     ["publish-prompt-version", publishEnvelope(promptId)],
-    ["unknown", {}],
   ] as const) {
     for (const authorization of [null, "Bearer bad", "Basic YTpi"]) {
       const response = await post(path, body, authorization);
@@ -93,6 +91,32 @@ test("no token or a bad token gives 401, no owner role gives 403, on each comman
     const response = await post(path, body, "Bearer guest");
     assert.equal(response.status, 403, path);
     assert.equal(await problemCode(response), "forbidden");
+  }
+  assert.equal((await store.readAll({ limit: 1000 })).length, count);
+});
+
+test("no token gives 401 before the body is read, also on a path with empty segments", async () => {
+  const promptId = await newPrompt();
+  const count = (await store.readAll({ limit: 1000 })).length;
+  for (const [name, valid] of [
+    ["create-prompt", createEnvelope({ payload: { name: "empty-segments" } })],
+    ["publish-prompt-version", publishEnvelope(promptId)],
+  ] as const) {
+    for (const path of [
+      `/internal/commands/${name}`,
+      `//internal/commands/${name}`,
+      `/internal//commands/${name}`,
+    ]) {
+      for (const body of ["{}", "not json", JSON.stringify(valid)]) {
+        const response = await fetch(`${base}${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body,
+        });
+        assert.equal(response.status, 401, `${path} ${body}`);
+        assert.equal(await problemCode(response), "unauthorized");
+      }
+    }
   }
   assert.equal((await store.readAll({ limit: 1000 })).length, count);
 });
