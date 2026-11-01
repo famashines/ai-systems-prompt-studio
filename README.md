@@ -27,7 +27,8 @@ v0.3.0, `src/prompts.ts`.
 
 At start, the migration `001-seed-prompts` makes version 1 of two system
 prompts, with the actor `{ "kind": "system", "id": "prompt-studio" }`.
-The ids are fixed. agent-manager seeds point at them:
+The ids are fixed. agent-manager points at them (the seed, then
+`upgradeOrchestrator` for version 2 of `orchestrator`):
 
 | Agent          | `promptId`                             | `version` |
 | -------------- | -------------------------------------- | --------- |
