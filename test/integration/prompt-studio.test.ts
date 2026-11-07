@@ -228,6 +228,7 @@ test("the service is ready after the event store and seed migrations", async () 
     "000-event-store",
     "001-seed-prompts",
     "002-orchestrator-prompt-v2",
+    "003-idea-scout-prompt",
   ]);
 });
 
