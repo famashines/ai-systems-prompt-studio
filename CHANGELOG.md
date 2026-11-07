@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Migration `003-idea-scout-prompt`: version 1 of the `idea-scout` prompt,
+  for the web search agent (ADR 0032).
 - Migration `002-orchestrator-prompt-v2`: version 2 of the `orchestrator`
   prompt names the `plan`, `aggregate` and `check` calls and their
   answers, and keeps the data block rules. It is published only when the

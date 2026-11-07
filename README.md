@@ -43,6 +43,9 @@ is safe to run again: it never writes a second copy, and it never
 changes a prompt that exists. A better text is a new version through
 `PublishPromptVersion`.
 
+The migration `003-idea-scout-prompt` makes version 1 of the prompt of the
+web search agent (ADR 0032).
+
 The migration `002-orchestrator-prompt-v2` publishes version 2 of the
 `orchestrator` prompt (`orchestratorV2` in `src/seeds.ts`, fixed
 `commandId`). Version 2 names the three orchestrator calls of
@@ -230,7 +233,8 @@ and add a NetworkPolicy egress from prompt-studio to Keycloak on port
 when the JWKS cannot be read, a command gets 503.
 
 At start the service connects to MongoDB, runs the migrations
-`000-event-store`, `001-seed-prompts` and `002-orchestrator-prompt-v2`,
+`000-event-store`, `001-seed-prompts`, `002-orchestrator-prompt-v2` and
+`003-idea-scout-prompt`,
 connects to NATS, starts the relay, and listens. NATS and the relay are not readiness checks. When NATS
 is down or the stream `PROMPTS` does not exist, the service still takes
 commands, and the events wait in the outbox. The service does not make
