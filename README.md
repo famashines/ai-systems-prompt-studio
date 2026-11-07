@@ -44,7 +44,7 @@ changes a prompt that exists. A better text is a new version through
 `PublishPromptVersion`.
 
 The migration `003-idea-scout-prompt` makes version 1 of the prompt of the
-web search agent (ADR 0029).
+web search agent (ADR 0032).
 
 The migration `002-orchestrator-prompt-v2` publishes version 2 of the
 `orchestrator` prompt (`orchestratorV2` in `src/seeds.ts`, fixed
